@@ -16,17 +16,14 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install deps
+      - name: Install deps & Get Device Code
+        env:
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
         run: |
           python -m pip install -U pip
           pip install requests
 
-      - name: Get device code and poll for token
-        env:
-          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
-          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
-          GITHUB_STEP_SUMMARY: ${{ env.GITHUB_STEP_SUMMARY }}
-        run: |
           python -u - <<'PY'
           import os
           import sys
@@ -43,12 +40,11 @@ jobs:
 
           DEVICE_URL = "https://oauth2.googleapis.com/device/code"
           TOKEN_URL = "https://oauth2.googleapis.com/token"
-
           SCOPE = "https://www.googleapis.com/auth/youtube.upload"
 
-          print("="*60)
-          print("REQUEST DEVICE CODE")
-          print("="*60)
+          print("\n========================================")
+          print("ĐANG LẤY DEVICE CODE...")
+          print("========================================")
 
           r = requests.post(
               DEVICE_URL,
@@ -70,95 +66,62 @@ jobs:
           verification_url = data["verification_url"]
           user_code = data["user_code"]
           device_code = data["device_code"]
-          interval = int(data.get("interval",5))
+          interval = int(data.get("interval", 5))
 
           print()
-          print("===================================================")
-          print("MỞ LINK SAU")
-          print(verification_url)
+          print("========================================")
+          print("URL xác minh:", verification_url)
+          print("MÃ người dùng:", user_code)
+          print("========================================")
           print()
-          print("NHẬP USER CODE")
-          print(user_code)
-          print("===================================================")
-          print()
-
-          summary=os.environ.get("GITHUB_STEP_SUMMARY")
-          if summary:
-              with open(summary,"a",encoding="utf8") as f:
-                  f.write("# YouTube Device Flow\n\n")
-                  f.write(f"**Verification URL**\n\n`{verification_url}`\n\n")
-                  f.write(f"**User Code**\n\n`{user_code}`\n")
-
-          with open("device_info.txt","w",encoding="utf8") as f:
-              f.write("Verification URL:\n")
-              f.write(verification_url+"\n\n")
-              f.write("User Code:\n")
-              f.write(user_code+"\n")
-
-          print("Waiting for authorization...")
 
           while True:
 
-              resp=requests.post(
+              t = requests.post(
                   TOKEN_URL,
                   data={
-                      "client_id":CLIENT_ID,
-                      "client_secret":CLIENT_SECRET,
-                      "device_code":device_code,
-                      "grant_type":"urn:ietf:params:oauth:grant-type:device_code"
+                      "client_id": CLIENT_ID,
+                      "client_secret": CLIENT_SECRET,
+                      "device_code": device_code,
+                      "grant_type": "urn:ietf:params:oauth:grant-type:device_code"
                   },
                   timeout=30
               )
 
-              print("HTTP",resp.status_code)
+              print("HTTP:", t.status_code)
 
               try:
-                  j=resp.json()
+                  j = t.json()
               except:
-                  print(resp.text)
+                  print(t.text)
                   sys.exit(1)
 
               if "refresh_token" in j:
-
                   print()
-                  print("="*60)
+                  print("========================================")
                   print("YT_REFRESH_TOKEN")
-                  print("="*60)
                   print(j["refresh_token"])
-                  print("="*60)
-
-                  if summary:
-                      with open(summary,"a",encoding="utf8") as f:
-                          f.write("\n---\n")
-                          f.write("## Refresh Token\n\n")
-                          f.write(f"`{j['refresh_token']}`\n")
-
-                  with open("refresh_token.txt","w") as f:
-                      f.write(j["refresh_token"])
-
+                  print("========================================")
                   break
 
-              err=j.get("error","")
+              err = j.get("error", "")
 
-              print("Status:",err)
-
-              if err=="authorization_pending":
+              if err == "authorization_pending":
+                  print("Đang chờ bạn xác minh...")
                   time.sleep(interval)
                   continue
 
-              if err=="slow_down":
-                  interval+=5
+              if err == "slow_down":
+                  interval += 5
+                  print("Google yêu cầu chậm lại...")
                   time.sleep(interval)
                   continue
 
-              if err=="expired_token":
-                  print()
-                  print("DEVICE CODE HẾT HẠN.")
-                  print("Hãy chạy lại workflow để lấy mã mới.")
+              if err == "expired_token":
+                  print("Device code đã hết hạn.")
                   sys.exit(1)
 
-              if err=="access_denied":
-                  print()
+              if err == "access_denied":
                   print("Bạn đã từ chối cấp quyền.")
                   sys.exit(1)
 
@@ -166,12 +129,3 @@ jobs:
               sys.exit(1)
 
           PY
-
-      - name: Upload device info
-        uses: actions/upload-artifact@v4
-        with:
-          name: device-info
-          path: |
-            device_info.txt
-            refresh_token.txt
-          if-no-files-found: ignore
